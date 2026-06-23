@@ -8,12 +8,16 @@ import datetime
 from langchain_tavily import TavilySearch
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
-from langgraph.checkpoint.memory import MemorySaver
+# from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+import sqlite3
 from langchain_groq import ChatGroq
 import operator
 from groq import BadRequestError
 
-memory=MemorySaver()
+sqlite_connect=sqlite3.connect("Sqlite_database.sqlite", check_same_thread=False)
+
+memory=SqliteSaver(sqlite_connect)
 
 load_dotenv()
 
