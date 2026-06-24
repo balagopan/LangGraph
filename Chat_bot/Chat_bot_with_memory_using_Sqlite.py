@@ -14,6 +14,7 @@ import sqlite3
 from langchain_groq import ChatGroq
 import operator
 from groq import BadRequestError
+from typing import Optional
 
 sqlite_connect=sqlite3.connect("Sqlite_database.sqlite", check_same_thread=False)
 
@@ -24,13 +25,16 @@ load_dotenv()
 class AgentState(TypedDict):
     input:str
     chat_history:Annotated[List, operator.add]
-    intermediate_step:Annotated[List, operator.add]
+    errors:Union[List,None]
+    tool_results:Annotated[List, operator.add]
     output:Union[AIMessage,None]
 
 
 @tool
-def get_system_time(format:str="%Y:%m:%d %H-%m-%S"):
+def get_system_time(format: Optional[str] = None):
     """Returns the system time in the specified format"""
+    if format == None:
+        format="%Y:%m:%d %H-%m-%S"
     current_time = datetime.datetime.now()
     formatted_time=current_time.strftime(format)
     return formatted_time
@@ -40,7 +44,8 @@ search_tool=TavilySearch(search_depth="basic")
 tools=[get_system_time,search_tool]
 
 # llm=llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview")
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+# llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 # llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0)
 # llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.0)
 # llm = ChatGroq(model="groq/compound")
@@ -49,13 +54,15 @@ llm_with_tools=llm.bind_tools(tools=tools)
 
 
 prompt_template_main=ChatPromptTemplate.from_messages([
-    ("system","You are an AI Assistant"
-    "The chat history you had are as follows"
-    "{chat_history}"
-    "The information you have by running tools are follows:"
-    "{intermediate_step}"),
+    ("system","You are an AI Agent built using langchain. "
+    "Chat history: \n"
+    "{chat_history}\n"
+    "Tool results:\n "
+    "{tool_results}\n"
+    "For the current process the following error was encountered by the llm, address this: \n"
+    "{errors}"),
     ("human","{input}"),
-    "If you cant find the answer to  the user query from the tools information and chat history, use tools"
+    ("system","If the users question can be answered using tool results above, do not use the tools.")
 ])
 
 responder_chain=prompt_template_main | llm_with_tools
@@ -63,10 +70,13 @@ responder_chain=prompt_template_main | llm_with_tools
 def responder_node(state:AgentState):
     max_tries=3
     current_state=state
-    for attempt in range(max_tries):
+    for attempt in range(max_tries):        
         try:
             result=responder_chain.invoke(current_state)
-            return {"output":result,"intermediate_step": current_state.get("intermediate_step", []) + [result.content],"chat_history":[current_state["input"],result.content]}
+            if isinstance(result,AIMessage) and hasattr(result,"tool_calls") and len(result.tool_calls)>0:
+                return {"output":result}
+            else:
+                return {"output":result.content[0]["text"],"chat_history":[current_state["input"],result.content[0]["text"]]}
         except Exception as e:
             last_error = e
             print(f"Formatting error on attempt {attempt + 1}: {e}")
@@ -74,10 +84,10 @@ def responder_node(state:AgentState):
             error_msg=([
                 "system",f"Your last generation failed with an API formatting error: {str(e)}."
                  ])
-            current_state["intermediate_step"]+[error_msg]
+            current_state["errors"]=[error_msg]
         
     result=f"Formatting error still persists on attempt {attempt}: {last_error}"
-    return {"output":result,"intermediate_step": current_state.get("intermediate_step", []) + [result]}
+    return {"errors": current_state.get("errors", []) + [result]}
 
 def tool_node(state:AgentState):
     result=[]
@@ -92,8 +102,8 @@ def tool_node(state:AgentState):
         else:
             tool_result=f"Use only {tools} as tools"
         result.append((tool_name,tool_result))
-
-    return {"intermediate_step":result}
+        
+    return {"tool_results":result}
 
 def should_continue(state:AgentState):
     lastAIMessage=state["output"]
@@ -114,7 +124,7 @@ graph.add_edge("tool_executor","responder")
 app=graph.compile(memory)
 
 config={"configurable":{
-    "thread_id":1
+    "thread_id":2
 }}
 
 prompt_template_exit=ChatPromptTemplate.from_messages([
@@ -137,9 +147,9 @@ while True:
     answer=app.invoke({
         "input":user_input,
         "chat_history":[],
-        "intermediate_step":[],
+        "errors":[],
+        "tool_results":[],
         "output":None
     },config=config)
 
-    print(f"AI :{answer['output'].content}")
-
+    print(f"AI :{answer["output"]}")
