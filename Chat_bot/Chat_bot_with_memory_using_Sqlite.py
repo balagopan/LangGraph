@@ -87,7 +87,7 @@ def responder_node(state:AgentState):
             current_state["errors"]=[error_msg]
         
     result=f"Formatting error still persists on attempt {attempt}: {last_error}"
-    return {"errors": current_state.get("errors", []) + [result]}
+    return {"errors": current_state.get("errors", None) + [result]}
 
 def tool_node(state:AgentState):
     result=[]
@@ -147,9 +147,9 @@ while True:
     answer=app.invoke({
         "input":user_input,
         "chat_history":[],
-        "errors":[],
+        "errors":None,
         "tool_results":[],
         "output":None
     },config=config)
 
-    print(f"AI :{answer["output"]}")
+    print(f"AI :{answer}")
